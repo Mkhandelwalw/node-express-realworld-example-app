@@ -2,6 +2,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import auth from '../auth/auth';
 import {
   addComment,
+  bulkFavoriteArticles,
   createArticle,
   deleteArticle,
   deleteComment,
@@ -76,6 +77,33 @@ router.post('/articles', auth.required, async (req: Request, res: Response, next
     next(error);
   }
 });
+
+/**
+ * Bulk favorite or unfavorite articles
+ * @auth required
+ * @route {POST} /articles/bulk-favorite
+ * @bodyparam slugs list of article slugs
+ * @bodyparam action 'favorite' or 'unfavorite'
+ * @returns articles list of updated articles
+ */
+router.post(
+  ['/articles/bulk-favorite', '/articles/favorites'],
+  auth.required,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const slugs =
+        req.body?.slugs ??
+        req.body?.articles ??
+        req.body?.articleSlugs ??
+        req.body?.bulk?.slugs;
+      const action = req.body?.action ?? req.body?.bulk?.action;
+      const result = await bulkFavoriteArticles(slugs, action, req.auth?.user?.id);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * Get unique article

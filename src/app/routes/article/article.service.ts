@@ -650,3 +650,119 @@ export const unfavoriteArticle = async (slugPayload: string, id: number) => {
 
   return result;
 };
+
+export const bulkFavoriteArticles = async (
+  slugs: string[],
+  action: 'favorite' | 'unfavorite',
+  id?: number,
+) => {
+  if (!id) {
+    throw new HttpException(401, { message: 'Authentication required' });
+  }
+
+  if (!action || (action !== 'favorite' && action !== 'unfavorite')) {
+    throw new HttpException(422, {
+      errors: { action: ["must be either 'favorite' or 'unfavorite'"] },
+    });
+  }
+
+  if (!slugs || !Array.isArray(slugs) || slugs.length === 0) {
+    throw new HttpException(422, {
+      errors: { slugs: ["can't be blank and must be a non-empty array"] },
+    });
+  }
+
+  const invalidSlugs = slugs.filter((slug) => typeof slug !== 'string' || !slug.trim());
+  if (invalidSlugs.length > 0) {
+    throw new HttpException(422, {
+      errors: { slugs: ['must contain non-empty string slugs'] },
+    });
+  }
+
+  const uniqueSlugs = Array.from(new Set(slugs.map((s) => s.trim())));
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+
+  if (!user) {
+    throw new HttpException(404, { message: 'User not found' });
+  }
+
+  const existingArticles = await prisma.article.findMany({
+    where: {
+      slug: { in: uniqueSlugs },
+    },
+    select: {
+      id: true,
+      slug: true,
+    },
+  });
+
+  if (existingArticles.length !== uniqueSlugs.length) {
+    const foundSlugs = new Set(existingArticles.map((a) => a.slug));
+    const missingSlugs = uniqueSlugs.filter((s) => !foundSlugs.has(s));
+    throw new HttpException(404, {
+      message: `Articles not found for slugs: ${missingSlugs.join(', ')}`,
+      errors: {
+        articles: [`Articles not found for slugs: ${missingSlugs.join(', ')}`],
+      },
+    });
+  }
+
+  if (action === 'favorite') {
+    await prisma.user.update({
+      where: { id },
+      data: {
+        favorites: {
+          connect: uniqueSlugs.map((slug) => ({ slug })),
+        },
+      },
+    });
+  } else {
+    await prisma.user.update({
+      where: { id },
+      data: {
+        favorites: {
+          disconnect: uniqueSlugs.map((slug) => ({ slug })),
+        },
+      },
+    });
+  }
+
+  const updatedArticles = await prisma.article.findMany({
+    where: {
+      slug: { in: uniqueSlugs },
+    },
+    include: {
+      tagList: {
+        select: {
+          name: true,
+        },
+      },
+      author: {
+        select: {
+          username: true,
+          bio: true,
+          image: true,
+          followedBy: true,
+        },
+      },
+      favoritedBy: true,
+      _count: {
+        select: {
+          favoritedBy: true,
+        },
+      },
+    },
+  });
+
+  const articleMap = new Map(updatedArticles.map((a) => [a.slug, a]));
+  const articles = uniqueSlugs
+    .map((slug) => articleMap.get(slug))
+    .filter(Boolean)
+    .map((article) => articleMapper(article, id));
+
+  return { articles };
+};
